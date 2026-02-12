@@ -1,0 +1,7 @@
+{
+  "name": "AI Portrait Studio",
+  "description": "Transform your photos into professional digital art using Gemini AI. Simple 5-rupee transformations with secure Razorpay integration.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
