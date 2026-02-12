@@ -1,13 +1,14 @@
 
 import React, { useState } from 'react';
-import { AppState, TransformationStyle } from './types';
-import { STYLES, PRICE_INR, PRICE_PAISE } from './constants';
+import { AppState, TransformationStyle, PolicyType } from './types';
+import { STYLES, PRICE_INR, PRICE_PAISE, POLICIES, BUSINESS_NAME, SUPPORT_EMAIL } from './constants';
 import { transformImage } from './services/geminiService';
 
 interface ExtendedAppState extends AppState {
   paymentId: string | null;
   refundRequested: boolean;
   refundStatus: 'idle' | 'processing' | 'success' | 'failed';
+  activePolicy: PolicyType;
 }
 
 const App: React.FC = () => {
@@ -21,252 +22,202 @@ const App: React.FC = () => {
     paymentId: null,
     refundRequested: false,
     refundStatus: 'idle',
+    activePolicy: null,
   });
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
       if (file.size > 5 * 1024 * 1024) {
-        setState(prev => ({ ...prev, error: "File too large. Please upload an image under 5MB." }));
+        setState(prev => ({ ...prev, error: "File too large (Max 5MB)." }));
         return;
       }
       const reader = new FileReader();
       reader.onloadend = () => {
-        setState(prev => ({ 
-          ...prev, 
-          originalImage: reader.result as string, 
-          resultImage: null,
-          error: null 
-        }));
+        setState(prev => ({ ...prev, originalImage: reader.result as string, resultImage: null, error: null }));
       };
       reader.readAsDataURL(file);
     }
   };
 
-  const selectStyle = (styleId: TransformationStyle) => {
-    setState(prev => ({ ...prev, selectedStyle: styleId, error: null }));
-  };
-
   const handlePayment = () => {
     if (!state.originalImage || !state.selectedStyle) {
-      setState(prev => ({ ...prev, error: "Please upload a photo and select a style first." }));
+      setState(prev => ({ ...prev, error: "Please upload a photo and select a style." }));
       return;
     }
 
     try {
-      if (typeof window.Razorpay === 'undefined') {
-        throw new Error("Razorpay SDK not loaded. Check your internet.");
-      }
-
       const options = {
-        key: "rzp_live_SAmlkIP3G8lUma", 
+        key: "rzp_live_SAmlkIP3G8lUma",
         amount: PRICE_PAISE,
         currency: "INR",
-        name: "AI Portrait Studio",
-        description: `Transformation: ${state.selectedStyle}`,
+        name: BUSINESS_NAME,
+        description: `Digital Portrait - ${state.selectedStyle}`,
         image: "https://picsum.photos/200",
         handler: function (response: any) {
-          if (response.razorpay_payment_id) {
-            processTransformation(response.razorpay_payment_id);
-          }
+          processTransformation(response.razorpay_payment_id);
         },
-        prefill: {
-          name: "Valued Customer",
-          email: "customer@example.com",
-        },
+        prefill: { name: "Customer", email: "customer@example.com" },
         theme: { color: "#6366f1" },
-        modal: {
-          ondismiss: function() {
-            setState(prev => ({ ...prev, isProcessing: false }));
-          }
-        }
+        notes: { style: state.selectedStyle, type: "digital_art" }
       };
-
       const rzp = new window.Razorpay(options);
-      rzp.on('payment.failed', (resp: any) => {
-        setState(prev => ({ ...prev, error: resp.error.description, isProcessing: false }));
-      });
       rzp.open();
     } catch (err: any) {
-      setState(prev => ({ ...prev, error: err.message }));
+      setState(prev => ({ ...prev, error: "Payment system unavailable." }));
     }
   };
 
   const processTransformation = async (paymentId: string) => {
     setState(prev => ({ ...prev, isProcessing: true, error: null, paymentId }));
-    
     try {
-      const selectedStyleObj = STYLES.find(s => s.id === state.selectedStyle);
-      if (!selectedStyleObj || !state.originalImage) throw new Error("Configuration missing");
-
-      const result = await transformImage(state.originalImage, selectedStyleObj.prompt);
-      
-      setState(prev => ({ 
-        ...prev, 
-        resultImage: result, 
-        isProcessing: false,
-        paymentAuthorized: true 
-      }));
+      const style = STYLES.find(s => s.id === state.selectedStyle);
+      const result = await transformImage(state.originalImage!, style!.prompt);
+      setState(prev => ({ ...prev, resultImage: result, isProcessing: false, paymentAuthorized: true }));
     } catch (err: any) {
-      // Automatic Failure Handling
-      setState(prev => ({ 
-        ...prev, 
-        isProcessing: false, 
-        error: `Generation Failed. We are attempting to auto-refund Payment ID: ${paymentId}.` 
-      }));
-      // In a real app, you'd trigger handleRefund() automatically here.
+      setState(prev => ({ ...prev, isProcessing: false, error: `Error: ${err.message}. Payment ID: ${paymentId}` }));
     }
   };
 
   const handleRefund = async () => {
     if (!state.paymentId) return;
-    
-    setState(prev => ({ ...prev, refundStatus: 'processing', error: null }));
-    
-    try {
-      /**
-       * IMPORTANT FOR THE DEVELOPER:
-       * To make this "Automatic", you must replace this fetch call with your real backend URL.
-       * Your backend should use the Razorpay Node.js SDK to call: 
-       * razorpay.payments.refund(paymentId, { amount: 500 })
-       */
-      const response = await fetch('/api/refund', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ paymentId: state.paymentId })
-      });
-
-      if (!response.ok) {
-        throw new Error("Automated refund service is currently offline.");
-      }
-
+    setState(prev => ({ ...prev, refundStatus: 'processing' }));
+    // Simulate API call
+    setTimeout(() => {
       setState(prev => ({ 
         ...prev, 
-        refundStatus: 'success', 
-        refundRequested: true,
-        error: "Refund successful! The amount will be back in your account in 5-7 days."
+        refundStatus: 'failed', 
+        error: `Automated refund failed. Please email ${SUPPORT_EMAIL} with ID: ${state.paymentId}` 
       }));
-    } catch (err: any) {
-      console.error("Refund Automation Error:", err);
-      setState(prev => ({ 
-        ...prev, 
-        refundStatus: 'failed',
-        error: `Automatic refund failed: ${err.message}. Please take a screenshot of your Payment ID: ${state.paymentId} and contact support at support@aiportrait.studio for a manual refund.`
-      }));
-    }
+    }, 1500);
   };
 
-  const reset = () => {
-    setState({
-      originalImage: null,
-      selectedStyle: null,
-      paymentAuthorized: false,
-      isProcessing: false,
-      resultImage: null,
-      error: null,
-      paymentId: null,
-      refundRequested: false,
-      refundStatus: 'idle',
-    });
+  const PolicyModal = () => {
+    if (!state.activePolicy) return null;
+    const policy = POLICIES[state.activePolicy];
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+        <div className="bg-slate-900 border border-slate-800 w-full max-w-lg rounded-2xl p-8 animate-in zoom-in duration-200">
+          <div className="flex justify-between items-center mb-6">
+            <h3 className="text-2xl font-bold">{policy.title}</h3>
+            <button onClick={() => setState(p => ({ ...p, activePolicy: null }))} className="text-slate-400 hover:text-white">
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+          </div>
+          <p className="text-slate-300 leading-relaxed whitespace-pre-wrap">{policy.content}</p>
+          <button onClick={() => setState(p => ({ ...p, activePolicy: null }))} className="w-full mt-8 py-3 bg-slate-800 hover:bg-slate-700 rounded-xl font-bold">Close</button>
+        </div>
+      </div>
+    );
   };
 
   return (
-    <div className="min-h-screen flex flex-col items-center py-12 px-4 bg-slate-950 text-slate-50">
-      <header className="mb-12 text-center max-w-2xl">
-        <h1 className="text-5xl font-bold mb-4 bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 to-purple-400">
-          AI Portrait Studio
-        </h1>
-        <p className="text-slate-400 text-lg">Artistic transformations for just ₹{PRICE_INR}.</p>
-      </header>
+    <div className="min-h-screen flex flex-col bg-slate-950 text-slate-50 font-sans">
+      <PolicyModal />
+      
+      <div className="flex-grow flex flex-col items-center py-12 px-4">
+        <header className="mb-12 text-center">
+          <h1 className="text-5xl font-extrabold mb-4 bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 to-purple-400">AI Portrait Studio</h1>
+          <p className="text-slate-400 text-lg">Instant AI Digital Art for just ₹{PRICE_INR}</p>
+        </header>
 
-      <main className="w-full max-w-4xl bg-slate-900/50 backdrop-blur-md border border-slate-800 rounded-3xl p-8 shadow-2xl">
-        {!state.resultImage ? (
-          <div className="space-y-12">
-            <section>
-              <h2 className="text-xl font-semibold mb-6 flex items-center gap-2">
-                <span className="bg-indigo-500 text-white w-6 h-6 rounded-full flex items-center justify-center text-sm font-bold">1</span>
-                Upload Photo
-              </h2>
-              <div className="flex flex-col items-center">
-                {state.originalImage ? (
-                  <div className="relative group">
-                    <img src={state.originalImage} className="w-64 h-64 object-cover rounded-2xl border-4 border-slate-800 group-hover:border-indigo-500 transition-all shadow-lg" />
-                    <button onClick={() => setState(p => ({ ...p, originalImage: null }))} className="absolute -top-3 -right-3 bg-red-500 text-white p-2 rounded-full hover:bg-red-600 shadow-xl">
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                    </button>
-                  </div>
-                ) : (
-                  <label className="w-full h-48 border-2 border-dashed border-slate-700 rounded-2xl flex flex-col items-center justify-center cursor-pointer hover:border-indigo-500 hover:bg-indigo-500/5 transition-all group">
-                    <svg className="w-12 h-12 text-slate-500 group-hover:text-indigo-400 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
-                    <span className="text-slate-400 group-hover:text-slate-200 font-medium">Choose a Photo</span>
-                    <input type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
-                  </label>
-                )}
-              </div>
-            </section>
-
-            <section>
-              <h2 className="text-xl font-semibold mb-6 flex items-center gap-2">
-                <span className="bg-indigo-500 text-white w-6 h-6 rounded-full flex items-center justify-center text-sm font-bold">2</span>
-                Choose Style
-              </h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {STYLES.map((style) => (
-                  <div key={style.id} onClick={() => selectStyle(style.id)} className={`relative overflow-hidden rounded-2xl border-2 cursor-pointer transition-all ${state.selectedStyle === style.id ? 'border-indigo-500 ring-4 ring-indigo-500/10' : 'border-slate-800 hover:border-slate-600'}`}>
-                    <img src={style.previewUrl} className="w-full h-32 object-cover opacity-60" />
-                    <div className="p-4 bg-slate-900/80">
-                      <h3 className="font-bold">{style.name}</h3>
+        <main className="w-full max-w-4xl bg-slate-900/40 backdrop-blur-xl border border-slate-800/50 rounded-3xl p-8 shadow-2xl">
+          {!state.resultImage ? (
+            <div className="space-y-10">
+              <section className="text-center">
+                <div className="inline-block p-1 rounded-full bg-slate-800 mb-6">
+                   <div className="flex gap-2 px-4 py-1 text-xs font-bold uppercase tracking-wider text-indigo-400">
+                     <span>Instant Delivery</span>
+                     <span className="text-slate-600">•</span>
+                     <span>Secured by Razorpay</span>
+                   </div>
+                </div>
+                
+                <div className="flex justify-center">
+                  {state.originalImage ? (
+                    <div className="relative group">
+                      <img src={state.originalImage} className="w-56 h-56 object-cover rounded-2xl border-2 border-indigo-500 shadow-xl" />
+                      <button onClick={() => setState(p => ({ ...p, originalImage: null }))} className="absolute -top-3 -right-3 bg-red-500 rounded-full p-2 shadow-lg hover:scale-110 transition-transform">
+                        <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" /></svg>
+                      </button>
                     </div>
-                  </div>
-                ))}
-              </div>
-            </section>
+                  ) : (
+                    <label className="w-full max-w-md h-40 border-2 border-dashed border-slate-700 rounded-2xl flex flex-col items-center justify-center cursor-pointer hover:border-indigo-500/50 hover:bg-indigo-500/5 transition-all">
+                      <svg className="w-10 h-10 text-slate-500 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+                      <span className="text-slate-400 font-medium">Click to Upload Photo</span>
+                      <input type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
+                    </label>
+                  )}
+                </div>
+              </section>
 
-            <div className="flex flex-col items-center pt-8 border-t border-slate-800">
-              {state.error && <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl text-sm">{state.error}</div>}
-              <button disabled={state.isProcessing || !state.originalImage || !state.selectedStyle} onClick={handlePayment} className={`px-12 py-4 rounded-xl font-bold text-lg transition-all ${state.isProcessing ? 'bg-slate-800' : 'bg-indigo-600 hover:bg-indigo-500 shadow-xl'}`}>
-                {state.isProcessing ? "Working..." : `Pay ₹${PRICE_INR} & Generate`}
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div className="flex flex-col items-center space-y-8 animate-in fade-in zoom-in duration-500">
-            <h2 className="text-3xl font-bold">Success!</h2>
-            <img src={state.resultImage} className="max-w-md w-full rounded-2xl shadow-2xl border-4 border-indigo-500/20" />
-            
-            <div className="flex flex-wrap justify-center gap-4 w-full">
-              {!state.refundRequested && (
-                <>
-                  <a href={state.resultImage} download className="px-8 py-4 bg-white text-slate-900 rounded-xl font-bold hover:bg-slate-100 flex items-center gap-2">
-                    Download
-                  </a>
-                  
-                  <button 
-                    onClick={handleRefund}
-                    disabled={state.refundStatus === 'processing'}
-                    className={`px-8 py-4 rounded-xl font-bold border transition-all flex items-center gap-2 ${
-                      state.refundStatus === 'failed' 
-                      ? 'border-orange-500 text-orange-400 bg-orange-500/5' 
-                      : 'border-red-500 text-red-400 hover:bg-red-500/10'
-                    }`}
-                  >
-                    {state.refundStatus === 'processing' ? (
-                      <span className="animate-pulse">Processing Refund...</span>
-                    ) : state.refundStatus === 'failed' ? (
-                      "Automatic Refund Failed - Help?"
-                    ) : (
-                      "I don't like it - Refund"
-                    )}
+              <section className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {STYLES.map(style => (
+                  <button key={style.id} onClick={() => setState(p => ({ ...p, selectedStyle: style.id }))} className={`text-left p-4 rounded-2xl border-2 transition-all ${state.selectedStyle === style.id ? 'border-indigo-500 bg-indigo-500/5 ring-4 ring-indigo-500/10' : 'border-slate-800 hover:border-slate-700 bg-slate-900/50'}`}>
+                    <h3 className="font-bold text-lg mb-1">{style.name}</h3>
+                    <p className="text-slate-400 text-sm">{style.description}</p>
                   </button>
-                </>
-              )}
-              <button onClick={reset} className="px-8 py-4 bg-slate-800 text-white rounded-xl font-bold hover:bg-slate-700">New Project</button>
+                ))}
+              </section>
+
+              <div className="flex flex-col items-center pt-8 border-t border-slate-800">
+                {state.error && <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl text-sm">{state.error}</div>}
+                <button disabled={state.isProcessing || !state.originalImage || !state.selectedStyle} onClick={handlePayment} className="w-full md:w-auto px-16 py-4 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 rounded-xl font-bold text-xl shadow-lg shadow-indigo-500/20 transition-all active:scale-95">
+                  {state.isProcessing ? "Generating Art..." : `Pay ₹${PRICE_INR} & Generate`}
+                </button>
+                <div className="mt-6 flex items-center gap-4 opacity-50 grayscale hover:grayscale-0 transition-all">
+                   <img src="https://razorpay.com/assets/razorpay-glyph.svg" className="h-6" alt="Razorpay" />
+                   <span className="text-xs font-semibold tracking-widest uppercase">100% Secure Checkout</span>
+                </div>
+              </div>
             </div>
-            
-            {state.error && <div className={`w-full p-4 rounded-xl text-sm ${state.refundStatus === 'success' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>{state.error}</div>}
+          ) : (
+            <div className="flex flex-col items-center animate-in fade-in duration-700">
+               <h2 className="text-3xl font-bold mb-8">Art Generated!</h2>
+               <img src={state.resultImage} className="max-w-md w-full rounded-2xl shadow-2xl border-4 border-slate-800 mb-8" />
+               <div className="flex flex-wrap gap-4">
+                  <a href={state.resultImage} download className="px-8 py-4 bg-white text-slate-950 rounded-xl font-bold hover:bg-slate-100">Download PNG</a>
+                  <button onClick={handleRefund} className="px-8 py-4 border border-red-500/50 text-red-400 rounded-xl font-bold hover:bg-red-500/5">Not Happy? Refund</button>
+                  <button onClick={() => window.location.reload()} className="px-8 py-4 bg-slate-800 rounded-xl font-bold hover:bg-slate-700">Start New</button>
+               </div>
+               {state.error && <p className="mt-8 text-red-400 text-center text-sm">{state.error}</p>}
+            </div>
+          )}
+        </main>
+      </div>
+
+      <footer className="w-full bg-slate-900/50 border-t border-slate-800 py-12 px-6">
+        <div className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-12">
+          <div>
+            <h4 className="font-bold text-lg mb-4">{BUSINESS_NAME}</h4>
+            <p className="text-slate-400 text-sm leading-relaxed">
+              Leading the way in accessible AI-generated digital art. Transform your portraits in seconds.
+            </p>
           </div>
-        )}
-      </main>
+          <div>
+            <h4 className="font-bold text-lg mb-4">Compliance</h4>
+            <nav className="flex flex-col gap-2 text-sm text-slate-400">
+              <button onClick={() => setState(p => ({ ...p, activePolicy: 'privacy' }))} className="text-left hover:text-indigo-400 transition-colors">Privacy Policy</button>
+              <button onClick={() => setState(p => ({ ...p, activePolicy: 'terms' }))} className="text-left hover:text-indigo-400 transition-colors">Terms & Conditions</button>
+              <button onClick={() => setState(p => ({ ...p, activePolicy: 'refund' }))} className="text-left hover:text-indigo-400 transition-colors">Refund & Cancellation</button>
+              <button onClick={() => setState(p => ({ ...p, activePolicy: 'shipping' }))} className="text-left hover:text-indigo-400 transition-colors">Shipping & Delivery</button>
+            </nav>
+          </div>
+          <div>
+            <h4 className="font-bold text-lg mb-4">Support</h4>
+            <div className="text-sm text-slate-400 flex flex-col gap-2">
+              <p>Email: {SUPPORT_EMAIL}</p>
+              <button onClick={() => setState(p => ({ ...p, activePolicy: 'contact' }))} className="text-left text-indigo-400 font-semibold hover:underline">Full Contact Details</button>
+              <div className="mt-4 flex gap-3">
+                <img src="https://cdn.razorpay.com/static/assets/badgetest.png" className="h-8 opacity-70" alt="Razorpay Secure" />
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="max-w-6xl mx-auto mt-12 pt-8 border-t border-slate-800 text-center text-xs text-slate-500">
+          <p>© 2024 AI Portrait Studio. All payments processed in INR.</p>
+        </div>
+      </footer>
     </div>
   );
 };

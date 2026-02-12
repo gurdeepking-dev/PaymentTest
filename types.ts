@@ -4,6 +4,8 @@ export enum TransformationStyle {
   WATERCOLOR = 'Watercolor Masterpiece'
 }
 
+export type PolicyType = 'privacy' | 'terms' | 'refund' | 'contact' | 'shipping' | null;
+
 export interface StyleOption {
   id: TransformationStyle;
   name: string;
